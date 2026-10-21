@@ -119,11 +119,13 @@ func (h *ClustersHandler) RegisterCluster(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if verr := validateKubeconfigStatic(*req.Kubeconfig, h.cfg.KubeconfigExecCommands); verr != nil {
+			h.audit(r, "admin.cluster.register", payload, "", nil, map[string]string{"display_name": req.DisplayName}, fmt.Errorf("kubeconfig refused: %w", verr))
 			response.Error(w, http.StatusBadRequest, verr.Error())
 			return
 		}
 		probe, perr := probeKubeconfig(r, h.cfg, *req.Kubeconfig)
 		if perr != nil {
+			h.audit(r, "admin.cluster.register", payload, "", nil, map[string]string{"display_name": req.DisplayName}, fmt.Errorf("connection test failed: %w", perr))
 			response.Error(w, http.StatusBadRequest, "Connection test failed: "+perr.Error())
 			return
 		}
@@ -133,6 +135,8 @@ func (h *ClustersHandler) RegisterCluster(w http.ResponseWriter, r *http.Request
 		// namespace UID fingerprint.
 		if uid != "" {
 			if existing, ferr := h.registry.ClusterIDByUID(r.Context(), uid); ferr == nil {
+				h.audit(r, "admin.cluster.register", payload, string(existing), nil, map[string]string{"display_name": req.DisplayName},
+					errors.New("the same cluster is already registered"))
 				response.Error(w, http.StatusConflict,
 					fmt.Sprintf("This kubeconfig points to the same cluster already registered as '%s'.", existing))
 				return
@@ -240,23 +244,28 @@ func (h *ClustersHandler) UpdateCluster(w http.ResponseWriter, r *http.Request) 
 			response.Error(w, http.StatusBadRequest, "self cluster has no kubeconfig to rotate")
 			return
 		}
+		rotate := map[string]string{"kubeconfig": "replace"}
 		if verr := validateKubeconfigStatic(*req.Kubeconfig, h.cfg.KubeconfigExecCommands); verr != nil {
+			h.audit(r, "admin.cluster.update", payload, string(id), nil, rotate, fmt.Errorf("kubeconfig refused: %w", verr))
 			response.Error(w, http.StatusBadRequest, verr.Error())
 			return
 		}
 		probe, verr := probeKubeconfig(r, h.cfg, *req.Kubeconfig)
 		if verr != nil {
+			h.audit(r, "admin.cluster.update", payload, string(id), nil, rotate, fmt.Errorf("connection test failed: %w", verr))
 			response.Error(w, http.StatusBadRequest, "Connection test failed: "+verr.Error())
 			return
 		}
 		newUID := probe.UID
 		storedUID, _ := h.registry.ClusterUID(r.Context(), id)
 		if storedUID != "" && newUID != "" && storedUID != newUID {
+			h.audit(r, "admin.cluster.update", payload, string(id), nil, rotate, errors.New("the kubeconfig points to a different cluster"))
 			response.Error(w, http.StatusConflict,
 				"This kubeconfig points to a different cluster than the one registered. Delete and re-register instead.")
 			return
 		}
 		if _, werr := h.secrets.WriteKubeconfig(r.Context(), id, *req.Kubeconfig); werr != nil {
+			h.audit(r, "admin.cluster.update", payload, string(id), nil, rotate, fmt.Errorf("store kubeconfig: %w", werr))
 			response.Error(w, http.StatusInternalServerError, "store kubeconfig: "+werr.Error())
 			return
 		}
@@ -334,6 +343,7 @@ func (h *ClustersHandler) UpdateCluster(w http.ResponseWriter, r *http.Request) 
 			}
 			name := cluster.PrometheusSecretName(id)
 			if werr := h.secrets.WriteValue(r.Context(), name, cluster.PrometheusAuthKey, header); werr != nil {
+				h.audit(r, "admin.cluster.update", payload, string(id), nil, map[string]string{"prometheus_auth": "set"}, fmt.Errorf("store prometheus auth: %w", werr))
 				response.Error(w, http.StatusInternalServerError, "store prometheus auth: "+werr.Error())
 				return
 			}
@@ -365,6 +375,7 @@ func (h *ClustersHandler) UpdateCluster(w http.ResponseWriter, r *http.Request) 
 			}
 			name := cluster.LogSearchSecretName(id)
 			if werr := h.secrets.WriteValue(r.Context(), name, cluster.LogSearchAuthKey, header); werr != nil {
+				h.audit(r, "admin.cluster.update", payload, string(id), nil, map[string]string{"log_search_auth": "set"}, fmt.Errorf("store log search auth: %w", werr))
 				response.Error(w, http.StatusInternalServerError, "store log search auth: "+werr.Error())
 				return
 			}
@@ -490,7 +501,11 @@ func (h *ClustersHandler) TestCluster(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	h.audit(r, "admin.cluster.test", payload, string(id), nil, result, nil)
+	var testErr error
+	if !result.Healthy {
+		testErr = errors.New(result.Message)
+	}
+	h.audit(r, "admin.cluster.test", payload, string(id), nil, result, testErr)
 	response.JSON(w, http.StatusOK, result)
 }
 
