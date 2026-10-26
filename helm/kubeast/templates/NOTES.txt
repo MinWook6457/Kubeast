@@ -1,43 +1,66 @@
+{{- $ns := .Release.Namespace -}}
 ═══════════════════════════════════════════════════════════
-  Kubeast 가 설치되었습니다 ({{ .Release.Name }} / {{ .Release.Namespace }})
+  Kubeast {{ .Chart.AppVersion }} 설치를 시작했습니다
+  (릴리스 {{ .Release.Name }}, 네임스페이스 {{ $ns }})
 ═══════════════════════════════════════════════════════════
 
-▸ 게이트웨이 접속
+아래 순서대로 진행하세요. 명령은 한 줄씩 복사해 붙여 넣으면 되고,
+bash, zsh, PowerShell 어디서나 똑같이 동작합니다.
 
-{{- if eq .Values.gateway.service.type "NodePort" }}
-  NodePort 사용 중. 노드 IP 와 포트 {{ .Values.gateway.service.nodePort }} 로 접속하세요:
-    http://<node-ip>:{{ .Values.gateway.service.nodePort }}
+[1] Pod 가 모두 뜰 때까지 기다리기 (보통 1~5분)
+
+    kubectl -n {{ $ns }} wait --for=condition=Available deployment --all --timeout=5m
+
+    Deployment 마다 "condition met" 한 줄씩 나오면 준비된 것입니다.
+    진행 상황은 kubectl -n {{ $ns }} get pods 로 볼 수 있습니다.
+
+[2] 브라우저로 접속하기
+{{- if .Values.ingress.enabled }}
+
+    {{ if .Values.ingress.tls }}https{{ else }}http{{ end }}://{{ .Values.ingress.host }}
+{{- else if eq .Values.gateway.service.type "NodePort" }}
+
+    Docker Desktop        http://localhost:{{ .Values.gateway.service.nodePort }}
+    그 밖의 클러스터      http://<노드 IP>:{{ .Values.gateway.service.nodePort }}
+                          노드 IP: kubectl get nodes -o wide 의 INTERNAL-IP
 {{- else if eq .Values.gateway.service.type "LoadBalancer" }}
-  LoadBalancer 외부 IP 가 할당되면:
-    kubectl -n {{ .Release.Namespace }} get svc gateway
-{{- else }}
-  포트포워드 후 브라우저에서 접속:
-    kubectl -n {{ .Release.Namespace }} port-forward svc/gateway 8000:8000
-    http://localhost:8000
+
+    http://<EXTERNAL-IP>:8000
+    EXTERNAL-IP: kubectl -n {{ $ns }} get svc gateway (할당까지 1~2분 걸릴 수 있음)
 {{- end }}
-  admin 으로 로그인하면 등록된 클러스터가 없을 때 /setup 마법사로 이동합니다.
 
-▸ 초기 관리자 계정
+    주소가 열리지 않으면 아래 명령을 켜 둔 채로 http://localhost:8000 에 접속하세요.
+    kubectl -n {{ $ns }} port-forward svc/gateway 8000:8000
+{{- if and .Values.auth.cookieSecure (not .Values.ingress.tls) }}
 
-  ID:       {{ .Values.admin.email }}
-  Password: 다음 명령으로 확인하세요
-            (helm 이 자동 생성한 랜덤 비번입니다)
+    ⚠ localhost 가 아닌 http:// 주소로 접속하면 로그인 쿠키가 버려져
+      로그인이 되지 않습니다. 그때는 helm upgrade 에
+      --reuse-values --set auth.cookieSecure=false 를 붙여 다시 적용하세요.
+{{- end }}
 
-    kubectl -n {{ .Release.Namespace }} get secret {{ include "kubeast.secretsName" . }} \
-      -o jsonpath='{.data.DEFAULT_ADMIN_PASSWORD}' | base64 -d ; echo
+[3] admin 계정으로 로그인하기
 
-  ⚠ 로그인 후 즉시 비밀번호를 변경하세요.
-
-{{- if .Values.ai.enabled }}
-▸ AI 모델 등록
-
-  로그인 후 [Admin > AI Models] 페이지에서 OpenAI / Anthropic / Gemini
-  등의 API 키를 등록하면 챗봇이 활성화됩니다.
+    ID         {{ .Values.admin.email }}
+{{- if .Values.admin.password }}
+    Password   설치할 때 admin.password 로 정한 값
 {{- else }}
-▸ AI 끔 (ai.enabled: false)
+    Password   아래 명령이 출력하는 문자열 (설치할 때 무작위로 만든 값)
 
-  ai-service · tool-server · ModelConfig 컨트롤러 없이 설치됐습니다.
-  켜려면 --set ai.enabled=true 로 upgrade 하세요.
+    kubectl -n {{ $ns }} get secret {{ include "kubeast.secretsName" . }} -o go-template='{{ "{{" }}.data.DEFAULT_ADMIN_PASSWORD | base64decode | println{{ "}}" }}'
+{{- end }}
+
+[4] 로그인한 뒤 바로 admin 비밀번호 바꾸기
+
+[5] 관리할 클러스터 연결하기
+    등록된 클러스터가 없으면 로그인 직후 설정 화면(/setup)이 자동으로 열립니다.
+{{- if .Values.ai.enabled }}
+
+[6] AI 챗봇 켜기 (선택)
+    Admin > AI Models 에서 OpenAI, Anthropic, Gemini 등의 API 키를 등록하세요.
+{{- else }}
+
+[6] AI 는 꺼진 채로 설치됐습니다 (ai.enabled: false)
+    켜려면 --set ai.enabled=true 로 helm upgrade 하세요.
 {{- end }}
 
 ═══════════════════════════════════════════════════════════
