@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, AuditLogEntry, AuditLogFilter, AuditVerifyReport } from '@/services/api'
 import { clustersApi } from '@/services/api/clusters'
+import { usePermission } from '@/hooks/usePermission'
 import { CheckCircle, ChevronDown, ChevronUp, Play, Search } from 'lucide-react'
 import { formatTime, parseTypedTime, utcTitle } from '@/utils/time'
 import { DateTextInput } from '@/components/DateTextInput'
@@ -145,9 +146,11 @@ export default function AdminAudit() {
     onError: (e) => setIntegrityError(failureText(e)),
   })
 
+  // the cluster filter: without the full cluster list (admin.clusters.list), the clusters the auditor reaches
+  const everyCluster = usePermission().has('admin.clusters.list')
   const { data: clusters = [] } = useQuery({
-    queryKey: ['clusters-all'],
-    queryFn: () => clustersApi.listClusters(false),
+    queryKey: ['clusters-all', everyCluster],
+    queryFn: () => clustersApi.listClusters(!everyCluster),
     staleTime: 60_000,
   })
 
@@ -441,7 +444,7 @@ export default function AdminAudit() {
             {tr('adminAudit.reset', '초기화')}
           </button>
           <span className="ml-auto text-xs text-slate-400 self-center">
-            {tr('adminAudit.total', '총 {{total}}건', { total })}
+            {tr('adminAudit.total', '총 {{total}}건', { total, count: total })}
           </span>
         </div>
       </div>

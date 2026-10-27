@@ -29,6 +29,7 @@ export default function AdminRoles() {
   const [formDesc, setFormDesc] = useState('')
   const [formPerms, setFormPerms] = useState<Set<string>>(new Set())
   const [formError, setFormError] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [usersRole, setUsersRole] = useState<RoleWithDetails | null>(null)
 
   const { has: hasPerm } = usePermission()
@@ -76,8 +77,21 @@ export default function AdminRoles() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => api.adminDeleteRole(id),
+    mutationFn: ({ id }: { id: number; name: string }) => api.adminDeleteRole(id),
+    onMutate: () => setDeleteError(null),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['roles'] }),
+    // The server says why: a role still held or asked for comes with the counts.
+    onError: (err: any, vars) => {
+      const data = err?.response?.data
+      setDeleteError(
+        data?.code === 'role_in_use'
+          ? t('adminRoles.deleteInUse', {
+              defaultValue: 'Role "{{name}}" is still in use (accounts {{accounts}}, cluster grants {{grants}}, access requests {{requests}}). Give them another role first.',
+              name: vars.name, accounts: data.accounts, grants: data.cluster_grants, requests: data.access_requests,
+            })
+          : data?.detail || tr('adminRoles.deleteError', 'Failed to delete role'),
+      )
+    },
   })
 
   const closeModal = () => {
@@ -150,6 +164,12 @@ export default function AdminRoles() {
           {tr('adminRoles.create', 'Create Role')}
         </button>
       </div>
+
+      {deleteError && (
+        <div className="rounded-lg border border-red-900/40 bg-red-950/30 px-3 py-2 text-sm text-red-200" role="alert" data-testid="admin-roles-delete-error">
+          {deleteError}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="text-slate-400 text-sm">{tr('adminRoles.loading', 'Loading...')}</div>
@@ -241,7 +261,7 @@ export default function AdminRoles() {
                               confirmLabel: tr('adminRoles.delete', 'Delete'),
                               danger: true,
                             })
-                            if (ok) deleteMutation.mutate(role.id)
+                            if (ok) deleteMutation.mutate({ id: role.id, name: role.name })
                           }}
                           disabled={deleteMutation.isPending}
                           className="rounded-sm p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-950/30 transition-colors"

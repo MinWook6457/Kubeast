@@ -1,66 +1,72 @@
 {{- $ns := .Release.Namespace -}}
 ═══════════════════════════════════════════════════════════
-  Kubeast {{ .Chart.AppVersion }} 설치를 시작했습니다
-  (릴리스 {{ .Release.Name }}, 네임스페이스 {{ $ns }})
+  Kubeast {{ .Chart.AppVersion }} (release {{ .Release.Name }}, namespace {{ $ns }})
 ═══════════════════════════════════════════════════════════
 
-아래 순서대로 진행하세요. 명령은 한 줄씩 복사해 붙여 넣으면 되고,
-bash, zsh, PowerShell 어디서나 똑같이 동작합니다.
+Follow these steps. Each command is one line and works the same
+in bash, zsh and PowerShell.
 
-[1] Pod 가 모두 뜰 때까지 기다리기 (보통 1~5분)
+[1] Wait until the pods are up (usually 1 to 5 minutes)
 
     kubectl -n {{ $ns }} wait --for=condition=Available deployment --all --timeout=5m
 
-    Deployment 마다 "condition met" 한 줄씩 나오면 준비된 것입니다.
-    진행 상황은 kubectl -n {{ $ns }} get pods 로 볼 수 있습니다.
+    Each Deployment prints "condition met" when it is ready.
+    kubectl -n {{ $ns }} get pods shows the progress.
 
-[2] 브라우저로 접속하기
+[2] Open the gateway in a browser
 {{- if .Values.ingress.enabled }}
 
     {{ if .Values.ingress.tls }}https{{ else }}http{{ end }}://{{ .Values.ingress.host }}
 {{- else if eq .Values.gateway.service.type "NodePort" }}
 
-    Docker Desktop        http://localhost:{{ .Values.gateway.service.nodePort }}
-    그 밖의 클러스터      http://<노드 IP>:{{ .Values.gateway.service.nodePort }}
-                          노드 IP: kubectl get nodes -o wide 의 INTERNAL-IP
+    Docker Desktop    http://localhost:{{ .Values.gateway.service.nodePort }}
+    Other clusters    http://<node-ip>:{{ .Values.gateway.service.nodePort }}
+                      node-ip: INTERNAL-IP in kubectl get nodes -o wide
 {{- else if eq .Values.gateway.service.type "LoadBalancer" }}
 
     http://<EXTERNAL-IP>:8000
-    EXTERNAL-IP: kubectl -n {{ $ns }} get svc gateway (할당까지 1~2분 걸릴 수 있음)
+    EXTERNAL-IP: kubectl -n {{ $ns }} get svc gateway (it can take a minute or two)
 {{- end }}
 
-    주소가 열리지 않으면 아래 명령을 켜 둔 채로 http://localhost:8000 에 접속하세요.
+    If the address does not open, keep this running and open http://localhost:8000:
     kubectl -n {{ $ns }} port-forward svc/gateway 8000:8000
 {{- if and .Values.auth.cookieSecure (not .Values.ingress.tls) }}
 
-    ⚠ localhost 가 아닌 http:// 주소로 접속하면 로그인 쿠키가 버려져
-      로그인이 되지 않습니다. 그때는 helm upgrade 에
-      --reuse-values --set auth.cookieSecure=false 를 붙여 다시 적용하세요.
+    ⚠ Over plain http:// on an address other than localhost, the browser drops
+      the sign-in cookie and sign-in fails. Upgrade with
+      --reset-then-reuse-values --set auth.cookieSecure=false in that case.
 {{- end }}
 
-[3] admin 계정으로 로그인하기
+[3] Sign in as admin
 
     ID         {{ .Values.admin.email }}
 {{- if .Values.admin.password }}
-    Password   설치할 때 admin.password 로 정한 값
+    Password   the admin.password set at install
 {{- else }}
-    Password   아래 명령이 출력하는 문자열 (설치할 때 무작위로 만든 값)
+    Password   generated at install; this prints it:
 
     kubectl -n {{ $ns }} get secret {{ include "kubeast.secretsName" . }} -o go-template='{{ "{{" }}.data.DEFAULT_ADMIN_PASSWORD | base64decode | println{{ "}}" }}'
 {{- end }}
 
-[4] 로그인한 뒤 바로 admin 비밀번호 바꾸기
+[4] Change the admin password right after signing in
 
-[5] 관리할 클러스터 연결하기
-    등록된 클러스터가 없으면 로그인 직후 설정 화면(/setup)이 자동으로 열립니다.
+[5] Connect a cluster to manage
+    With no cluster registered, the setup page (/setup) opens after sign-in.
 {{- if .Values.ai.enabled }}
 
-[6] AI 챗봇 켜기 (선택)
-    Admin > AI Models 에서 OpenAI, Anthropic, Gemini 등의 API 키를 등록하세요.
+[6] Turn on the AI chat (optional)
+    Register an OpenAI, Anthropic, Gemini … key on Admin > AI Models.
 {{- else }}
 
-[6] AI 는 꺼진 채로 설치됐습니다 (ai.enabled: false)
-    켜려면 --set ai.enabled=true 로 helm upgrade 하세요.
+[6] AI is off (ai.enabled: false)
+    Installed without ai-service, tool-server and the ModelConfig controller.
+    To turn it on, upgrade with --reset-then-reuse-values --set ai.enabled=true.
 {{- end }}
+
+▸ Upgrading
+
+    helm upgrade {{ .Release.Name }} oci://ghcr.io/junginho0901/charts/kubeast --version <version> -n {{ $ns }} --reset-then-reuse-values
+
+    --reuse-values keeps this version's defaults and stops on values a later version added.
 
 ═══════════════════════════════════════════════════════════
