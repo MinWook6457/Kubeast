@@ -118,6 +118,23 @@ step 3 "Installing — pulling images and starting pods (usually 2–5 minutes)"
 HELM_LOG="$(mktemp)"
 trap 'rm -f "$HELM_LOG"' EXIT
 
+# Ctrl-C reaches Helm too and it cancels, but this script would return before Helm has marked the release failed: a
+# terminal closed then, or a rerun, finds it pending-install ("another operation is in progress"). Wait for Helm, and
+# pass TERM on when only this script gets it.
+HELM_PID=""
+stop_helm() {
+  trap - INT TERM
+  [[ "$TTY" == true ]] && printf "\r\033[2K"
+  if [[ -n "$HELM_PID" ]] && kill -0 "$HELM_PID" 2>/dev/null; then
+    printf "\n  Interrupted — stopping Helm...\n"
+    kill -TERM "$HELM_PID" 2>/dev/null || true
+    wait "$HELM_PID" 2>/dev/null || true
+  fi
+  exit "$1"
+}
+trap 'stop_helm 130' INT
+trap 'stop_helm 143' TERM
+
 helm upgrade --install "$RELEASE_NAME" "$CHART_PATH" ${VERSION_ARGS[@]+"${VERSION_ARGS[@]}"} \
   --namespace "$NAMESPACE" --create-namespace \
   --set gateway.service.type="$SERVICE_TYPE" \
@@ -188,12 +205,15 @@ if [[ "$SERVICE_TYPE" == "NodePort" ]]; then
   # Docker Desktop, kind on macOS/Windows and the like publish NodePorts on localhost, and
   # their node IP is not reachable from this machine: print the address that answers.
   if command -v curl >/dev/null 2>&1; then
+    ANSWERED=false
     for HOST in ${NODE_IP:+"$NODE_IP"} localhost; do
       if curl -s -o /dev/null --max-time 3 "http://${HOST}:${NODE_PORT}/"; then
         URL="http://${HOST}:${NODE_PORT}"
+        ANSWERED=true
         break
       fi
     done
+    [[ "$ANSWERED" == true ]] || warn "Neither the node IP nor localhost answered from here. If the address does not open, run: kubectl -n $NAMESPACE port-forward svc/gateway 8000:8000 and open http://localhost:8000"
   fi
 elif [[ "$SERVICE_TYPE" == "LoadBalancer" ]]; then
   info "Waiting for the LoadBalancer address..."
