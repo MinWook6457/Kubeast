@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -192,6 +193,28 @@ func (h *RoleHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 	}
 	if existing.IsSystem {
 		response.Error(w, http.StatusBadRequest, "Cannot delete system role")
+		return
+	}
+	// A role still held or asked for stays: deleting it would fail on the foreign keys.
+	users, grants, requests, err := h.repo.RoleUsage(r.Context(), id)
+	if err != nil {
+		response.InternalError(w, r, err)
+		return
+	}
+	if users+grants+requests > 0 {
+		inUse := fmt.Errorf("role %s is in use: %d accounts, %d cluster grants, %d access requests", existing.Name, users, grants, requests)
+		writeAudit(h.auditStore, r, payload, auditEvent{
+			action: "admin.roles.delete", targetType: "role", targetID: strconv.Itoa(id),
+			before: roleState(existing.Name, existing.Description, existing.Permissions), err: inUse,
+		})
+		// code and counts for the screen's own sentence (Role Management), detail for API callers
+		response.JSON(w, http.StatusConflict, map[string]any{
+			"detail":          fmt.Sprintf("Role %q is still in use (accounts %d, cluster grants %d, access requests %d). Give them another role first.", existing.Name, users, grants, requests),
+			"code":            "role_in_use",
+			"accounts":        users,
+			"cluster_grants":  grants,
+			"access_requests": requests,
+		})
 		return
 	}
 
